@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/generate.py", "use": "@vercel/python" },
+    { "src": "index.html",      "use": "@vercel/static" },
+    { "src": "savvy_logo.png",  "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/generate", "dest": "/api/generate.py" },
+    { "src": "/(.*)",          "dest": "/$1" }
+  ]
+}

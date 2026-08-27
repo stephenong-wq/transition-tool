@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transition Analysis | Savvy</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  background: #F5F2EC;
+  color: #2A2520;
+  font-size: 14px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+:root {
+  --teal-dark: #095972;
+  --teal-mid: #175242;
+  --cream: #FFF8F1;
+  --cream2: #F5F2EC;
+  --tan: #8E7E57;
+  --tan-light: #C7BCA1;
+  --red: #B63D35;
+  --muted: #89837C;
+}
+
+/* Header */
+.app-header {
+  background: linear-gradient(135deg, var(--teal-dark), var(--teal-mid));
+  color: white;
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.header-logo img { height: 36px; }
+.header-right { text-align: right; }
+.header-right .tool-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.header-right .tool-sub {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+/* Main */
+.main {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.card {
+  background: var(--cream);
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  width: 100%;
+  max-width: 520px;
+  overflow: hidden;
+}
+
+.card-header {
+  background: var(--teal-dark);
+  padding: 20px 28px;
+  color: white;
+}
+.card-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.card-header p {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.card-body { padding: 28px; }
+
+.field-group { margin-bottom: 20px; }
+.field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--tan-light);
+  border-radius: 5px;
+  font-size: 14px;
+  background: white;
+  color: var(--teal-dark);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input[type="text"]:focus {
+  border-color: var(--teal-dark);
+  box-shadow: 0 0 0 3px rgba(9,89,114,0.1);
+}
+
+/* File drop zone */
+.drop-zone {
+  border: 2px dashed var(--tan-light);
+  border-radius: 6px;
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: white;
+  position: relative;
+}
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--teal-dark);
+  background: rgba(9,89,114,0.03);
+}
+.drop-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+.drop-zone .icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+.drop-zone .drop-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.drop-zone .drop-hint {
+  font-size: 11px;
+  color: var(--tan-light);
+}
+.drop-zone .file-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--teal-dark);
+  margin-top: 4px;
+}
+
+/* Button */
+.btn-generate {
+  width: 100%;
+  padding: 13px;
+  background: var(--teal-dark);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  margin-top: 4px;
+  letter-spacing: 0.2px;
+}
+.btn-generate:hover:not(:disabled) { background: var(--teal-mid); }
+.btn-generate:active:not(:disabled) { transform: scale(0.99); }
+.btn-generate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Status */
+.status {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 5px;
+  font-size: 13px;
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+.status.loading {
+  display: flex;
+  background: rgba(9,89,114,0.08);
+  color: var(--teal-dark);
+}
+.status.error {
+  display: flex;
+  background: rgba(182,61,53,0.08);
+  color: var(--red);
+}
+.status.success {
+  display: flex;
+  background: rgba(23,82,66,0.08);
+  color: var(--teal-mid);
+}
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(9,89,114,0.2);
+  border-top-color: var(--teal-dark);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Download button */
+.btn-download {
+  display: none;
+  width: 100%;
+  padding: 13px;
+  background: var(--teal-mid);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-top: 12px;
+  text-align: center;
+  text-decoration: none;
+  letter-spacing: 0.2px;
+}
+.btn-download:hover { background: var(--teal-dark); color: white; }
+.btn-download.visible { display: block; }
+
+/* Divider */
+.divider {
+  border: none;
+  border-top: 1px solid rgba(199,188,161,0.4);
+  margin: 20px 0;
+}
+
+/* Footer */
+.app-footer {
+  text-align: center;
+  padding: 16px;
+  font-size: 11px;
+  color: var(--tan-light);
+}
+
+/* Instructions */
+.instructions {
+  background: rgba(9,89,114,0.04);
+  border-left: 3px solid var(--tan-light);
+  border-radius: 0 4px 4px 0;
+  padding: 12px 14px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.instructions strong { color: var(--teal-dark); }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-logo">
+    <img src="/savvy_logo.png" alt="Savvy">
+  </div>
+  <div class="header-right">
+    <div class="tool-name">Transition Analysis Generator</div>
+    <div class="tool-sub">Investment Team Portal</div>
+  </div>
+</header>
+
+<main class="main">
+  <div class="card">
+    <div class="card-header">
+      <h2>Generate Transition Report</h2>
+      <p>Upload an Orion Eclipse export to produce a formatted PDF transition analysis</p>
+    </div>
+    <div class="card-body">
+
+      <div class="instructions">
+        <strong>Before uploading:</strong> ensure trades are saved to the blotter in Orion Eclipse, then export the transition analysis Excel file.
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="clientName">Client Name</label>
+        <input type="text" id="clientName" placeholder="e.g. John &amp; Jane Doe" autocomplete="off">
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Orion Excel Export (.xlsx)</label>
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="fileInput" accept=".xlsx">
+          <div class="icon">📂</div>
+          <div class="drop-label">Drag &amp; drop your file here</div>
+          <div class="drop-hint">or click to browse</div>
+          <div class="file-name" id="fileName"></div>
+        </div>
+      </div>
+
+      <hr class="divider">
+
+      <button class="btn-generate" id="generateBtn" disabled onclick="generate()">
+        Generate PDF Report
+      </button>
+
+      <div class="status" id="statusBox">
+        <div class="spinner" id="spinner"></div>
+        <span id="statusText"></span>
+      </div>
+
+      <a class="btn-download" id="downloadBtn" href="#">
+        ⬇ Download PDF Report
+      </a>
+
+    </div>
+  </div>
+</main>
+
+<footer class="app-footer">
+  Savvy Advisors · Investment Team · Internal Use Only
+</footer>
+
+<script>
+  const clientNameEl = document.getElementById('clientName');
+  const fileInputEl  = document.getElementById('fileInput');
+  const fileNameEl   = document.getElementById('fileName');
+  const dropZoneEl   = document.getElementById('dropZone');
+  const generateBtn  = document.getElementById('generateBtn');
+  const statusBox    = document.getElementById('statusBox');
+  const statusText   = document.getElementById('statusText');
+  const spinner      = document.getElementById('spinner');
+  const downloadBtn  = document.getElementById('downloadBtn');
+
+  let selectedFile = null;
+
+  function updateGenerateBtn() {
+    generateBtn.disabled = !(clientNameEl.value.trim() && selectedFile);
+  }
+
+  clientNameEl.addEventListener('input', updateGenerateBtn);
+
+  fileInputEl.addEventListener('change', () => {
+    if (fileInputEl.files[0]) {
+      selectedFile = fileInputEl.files[0];
+      fileNameEl.textContent = selectedFile.name;
+    }
+    updateGenerateBtn();
+  });
+
+  // Drag-and-drop
+  dropZoneEl.addEventListener('dragover', e => { e.preventDefault(); dropZoneEl.classList.add('drag-over'); });
+  dropZoneEl.addEventListener('dragleave', () => dropZoneEl.classList.remove('drag-over'));
+  dropZoneEl.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZoneEl.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.name.endsWith('.xlsx')) {
+      selectedFile = f;
+      fileNameEl.textContent = f.name;
+      updateGenerateBtn();
+    }
+  });
+
+  function setStatus(type, msg) {
+    statusBox.className = 'status ' + type;
+    statusText.textContent = msg;
+    spinner.style.display = type === 'loading' ? 'block' : 'none';
+  }
+
+  async function generate() {
+    const clientName = clientNameEl.value.trim();
+    if (!clientName || !selectedFile) return;
+
+    generateBtn.disabled = true;
+    downloadBtn.classList.remove('visible');
+    setStatus('loading', 'Generating report — this may take a few seconds...');
+
+    try {
+      const arrayBuffer = await selectedFile.arrayBuffer();
+      const base64Excel = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_name: clientName, excel_data: base64Excel })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || `Server error ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const url  = URL.createObjectURL(blob);
+      const safe = clientName.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/ /g, '_');
+
+      downloadBtn.href = url;
+      downloadBtn.download = `Savvy_Transition_${safe}.pdf`;
+      downloadBtn.classList.add('visible');
+      setStatus('success', 'Report ready — click below to download.');
+
+    } catch (err) {
+      setStatus('error', err.message);
+    } finally {
+      updateGenerateBtn();
+    }
+  }
+
+  // Allow Enter key on client name to trigger generate
+  clientNameEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !generateBtn.disabled) generate();
+  });
+</script>
+</body>
+</html>

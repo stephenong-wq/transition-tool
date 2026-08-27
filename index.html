@@ -301,6 +301,17 @@ input[type="text"]:focus {
         </div>
       </div>
 
+      <div class="field-group">
+        <label class="field-label">Direct Indexing Proposal (.pdf) — Optional</label>
+        <div class="drop-zone" id="diDropZone">
+          <input type="file" id="diFileInput" accept=".pdf">
+          <div class="icon">📄</div>
+          <div class="drop-label">Drag &amp; drop the DI proposal here</div>
+          <div class="drop-hint">or click to browse — only if this transition includes Direct Indexing</div>
+          <div class="file-name" id="diFileName"></div>
+        </div>
+      </div>
+
       <hr class="divider">
 
       <button class="btn-generate" id="generateBtn" disabled onclick="generate()">
@@ -329,6 +340,9 @@ input[type="text"]:focus {
   const fileInputEl  = document.getElementById('fileInput');
   const fileNameEl   = document.getElementById('fileName');
   const dropZoneEl   = document.getElementById('dropZone');
+  const diFileInputEl = document.getElementById('diFileInput');
+  const diFileNameEl  = document.getElementById('diFileName');
+  const diDropZoneEl  = document.getElementById('diDropZone');
   const generateBtn  = document.getElementById('generateBtn');
   const statusBox    = document.getElementById('statusBox');
   const statusText   = document.getElementById('statusText');
@@ -336,6 +350,7 @@ input[type="text"]:focus {
   const downloadBtn  = document.getElementById('downloadBtn');
 
   let selectedFile = null;
+  let selectedDiFile = null; // optional
 
   function updateGenerateBtn() {
     generateBtn.disabled = !(clientNameEl.value.trim() && selectedFile);
@@ -351,7 +366,14 @@ input[type="text"]:focus {
     updateGenerateBtn();
   });
 
-  // Drag-and-drop
+  diFileInputEl.addEventListener('change', () => {
+    if (diFileInputEl.files[0]) {
+      selectedDiFile = diFileInputEl.files[0];
+      diFileNameEl.textContent = selectedDiFile.name;
+    }
+  });
+
+  // Drag-and-drop — main Eclipse export
   dropZoneEl.addEventListener('dragover', e => { e.preventDefault(); dropZoneEl.classList.add('drag-over'); });
   dropZoneEl.addEventListener('dragleave', () => dropZoneEl.classList.remove('drag-over'));
   dropZoneEl.addEventListener('drop', e => {
@@ -362,6 +384,19 @@ input[type="text"]:focus {
       selectedFile = f;
       fileNameEl.textContent = f.name;
       updateGenerateBtn();
+    }
+  });
+
+  // Drag-and-drop — optional Direct Indexing proposal
+  diDropZoneEl.addEventListener('dragover', e => { e.preventDefault(); diDropZoneEl.classList.add('drag-over'); });
+  diDropZoneEl.addEventListener('dragleave', () => diDropZoneEl.classList.remove('drag-over'));
+  diDropZoneEl.addEventListener('drop', e => {
+    e.preventDefault();
+    diDropZoneEl.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.name.endsWith('.pdf')) {
+      selectedDiFile = f;
+      diFileNameEl.textContent = f.name;
     }
   });
 
@@ -383,10 +418,17 @@ input[type="text"]:focus {
       const arrayBuffer = await selectedFile.arrayBuffer();
       const base64Excel = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
 
+      const payload = { client_name: clientName, excel_data: base64Excel };
+
+      if (selectedDiFile) {
+        const diArrayBuffer = await selectedDiFile.arrayBuffer();
+        payload.di_data = btoa(String.fromCharCode(...new Uint8Array(diArrayBuffer)));
+      }
+
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_name: clientName, excel_data: base64Excel })
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {

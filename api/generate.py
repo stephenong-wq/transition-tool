@@ -103,11 +103,16 @@ def _find_money_after(label, text):
     return _money_str_to_float(m.group()) if m else None
 
 def _extract_di_figures(di_bytes):
-    """Pull the Net Realized Gains/Losses and Transition Tax Liability figures
-    from the Direct Indexing proposal's Tax Assessment page.
+    """Pull the realized-gain breakdown and tax figure from the Direct
+    Indexing proposal's Tax Assessment page (Post-Transition/Recommended side).
 
-    Returns (gl, tax) — tax may be None if not found; raises ValueError if
-    the G/L figure (the one we actually need) can't be located.
+    Returns (gl, tax, lt, st):
+      gl  — Net Realized Gains/Losses (authoritative total)
+      tax — Transition Tax Liability (may be None)
+      lt  — Long Term portion of the realized gain (gains LT + losses LT)
+      st  — Short Term portion of the realized gain (gains ST + losses ST)
+    Raises ValueError if the G/L figure (the one we actually need) can't be
+    located.
     """
     reader = PdfReader(io.BytesIO(di_bytes))
 
@@ -125,12 +130,30 @@ def _extract_di_figures(di_bytes):
     gl  = _find_money_after('Net Realized Gains/Losses', target_text)
     tax = _find_money_after('Transition Tax Liability', target_text)
 
+    # Long/Short Term split: look at the "Proposed Realized Gains ... Long
+    # Term ... Short Term ... Proposed Realized Losses ... Long Term ...
+    # Short Term ..." block that precedes "Net Realized Gains/Losses".
+    lt = st = 0.0
+    gains_idx = target_text.rfind('Proposed Realized Gains')
+    net_idx   = target_text.find('Net Realized Gains/Losses',
+                                  gains_idx if gains_idx != -1 else 0)
+    if gains_idx != -1 and net_idx != -1 and net_idx > gains_idx:
+        block = target_text[gains_idx:net_idx]
+        vals = [_money_str_to_float(m.group()) for m in _MONEY_RE.finditer(block)]
+        # Expected order: [gains_total, gains_lt, gains_st, losses_total, losses_lt, losses_st]
+        gains_lt  = vals[1] if len(vals) > 1 else 0.0
+        gains_st  = vals[2] if len(vals) > 2 else 0.0
+        losses_lt = vals[4] if len(vals) > 4 else 0.0
+        losses_st = vals[5] if len(vals) > 5 else 0.0
+        lt = gains_lt + losses_lt
+        st = gains_st + losses_st
+
     if gl is None:
         raise ValueError(
             'Could not find "Net Realized Gains/Losses" in the Direct '
             'Indexing proposal PDF — check that the Tax Assessment page is intact.'
         )
-    return gl, tax
+    return gl, tax, lt, st
 
 def _merge_pdfs(main_bytes, appendix_bytes):
     """Append every page of appendix_bytes onto main_bytes, returning one PDF."""
@@ -316,29 +339,26 @@ def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color='white'):
 
 
 # ── Row height sizing ──────────────────────────────────────────────────────────
-_TAX_PANEL_ROW_H  = 0.026
-_TAX_PANEL_ROWS   = 7   # rows in the post-transition panel with no DI line
-_TAX_PANEL_ROWS_DI = 8  # +1 for the "Direct Indexing" breakout row
+_TAX_PANEL_ROW_H = 0.026
+_TAX_PANEL_ROWS  = 7   # rows in the post-transition panel (with or without DI)
 
-def _p1_overhead(tax_panel_rows):
-    return (
-        0.088 + 0.010   # header + gap
-      + 0.026 + 0.010   # model label + gap
-      + 0.088 + 0.018   # cards + gap
-      + 0.037 + 0.008   # AA section label (rule + text) + gap
-      + 0.020           # gap between AA table and tax assessment
-      + 0.037 + 0.008   # tax assessment section label + gap
-      + 0.026           # panel title bars
-      + tax_panel_rows * _TAX_PANEL_ROW_H   # panel content rows
-      + 0.020           # gap after panels
-      + 0.060           # disclaimer + bottom margin
-    )
+_P1_OVERHEAD = (
+    0.088 + 0.010   # header + gap
+  + 0.026 + 0.010   # model label + gap
+  + 0.088 + 0.018   # cards + gap
+  + 0.037 + 0.008   # AA section label (rule + text) + gap
+  + 0.020           # gap between AA table and tax assessment
+  + 0.037 + 0.008   # tax assessment section label + gap
+  + 0.026           # panel title bars
+  + _TAX_PANEL_ROWS * _TAX_PANEL_ROW_H   # panel content rows
+  + 0.020           # gap after panels
+  + 0.060           # disclaimer + bottom margin
+)
+_P1_AVAIL = (0.96 - 0.06) - _P1_OVERHEAD
 
-def _row_h(n_aa_rows, has_di=False):
+def _row_h(n_aa_rows):
     """Row height that fills the space left for the AA table after fixed overhead."""
-    tax_panel_rows = _TAX_PANEL_ROWS_DI if has_di else _TAX_PANEL_ROWS
-    avail = (0.96 - 0.06) - _p1_overhead(tax_panel_rows)
-    return min(0.032, avail / (n_aa_rows + 1))
+    return min(0.032, _P1_AVAIL / (n_aa_rows + 1))
 
 
 # ── Main PDF function ──────────────────────────────────────────────────────────
@@ -346,9 +366,9 @@ def _row_h(n_aa_rows, has_di=False):
 def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -> bytes:
     # Direct Indexing proposal (optional) — parsed up front so any parsing
     # error surfaces before we spend time building the Eclipse-based pages.
-    di_gl = di_tax = None
+    di_gl = di_tax = di_lt = di_st = None
     if di_bytes:
-        di_gl, di_tax = _extract_di_figures(di_bytes)
+        di_gl, di_tax, di_lt, di_st = _extract_di_figures(di_bytes)
 
     xlsx = pd.ExcelFile(io.BytesIO(excel_bytes))
 
@@ -445,7 +465,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         pass
 
     # Adaptive row height for the AA table
-    rh = _row_h(len(aa), has_di=(di_gl is not None))
+    rh = _row_h(len(aa))
 
     buf = io.BytesIO()
     with PdfPages(buf) as pdf:
@@ -562,27 +582,29 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
 
         n_trades_str = (str(int(rb_data['# of Trades']))
                         if '# of Trades' in rb_data else '—')
+        n_trades_label = '# of Trades (Not Including DI Rebalance)' if di_gl is not None else '# of Trades'
 
         pre_rows = [
             ('Unrealized G/L',  _fv(unrlzd_net),    False, False),
             ('  Gains',         _fv(unrlzd_gains),  False, False),
             ('  Losses',        _fv(unrlzd_losses), False, True),
         ]
-        combined_total = (post_total or 0) + di_gl if di_gl is not None else post_total
-        combined_tax   = (post_tax   or 0) + (di_tax or 0) if di_gl is not None else post_tax
+
+        has_di = di_gl is not None
+        combined_lt    = (post_lt  or 0) + (di_lt or 0) if has_di else post_lt
+        combined_st    = (post_st  or 0) + (di_st or 0) if has_di else post_st
+        combined_total = (post_total or 0) + di_gl       if has_di else post_total
+        combined_ytd   = (post_ytd or 0) + di_gl         if has_di else post_ytd
+        combined_tax   = (post_tax  or 0) + (di_tax or 0) if has_di else post_tax
 
         post_rows = [
             ('Realized Gains',        '',               True,  False),
-            ('  Long Term',           _fv(post_lt),     False, False),
-            ('  Short Term',          _fv(post_st),     False, False),
-        ]
-        if di_gl is not None:
-            post_rows.append(('  Direct Indexing', _fv(di_gl), False, False))
-        post_rows += [
+            ('  Long Term',           _fv(combined_lt), False, False),
+            ('  Short Term',          _fv(combined_st), False, False),
             ('Net Realized G/L',      _fv(combined_total),  False, False),
-            ('YTD Gain (Post-Trade)', _fv(post_ytd),    False, False),
+            ('YTD Gain (Post-Trade)', _fv(combined_ytd), False, False),
             ('Estimated Tax',         _fv(combined_tax),    False, True),
-            ('# of Trades',           n_trades_str,     False, False),
+            (n_trades_label,          n_trades_str,     False, False),
         ]
 
         panel_w = (CW - 0.014) / 2

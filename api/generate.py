@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
-import json, base64, io, os, traceback
+import json, base64, io, os, re, traceback
 from http.server import BaseHTTPRequestHandler
 from os.path import commonprefix
 from datetime import date
@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.backends.backend_pdf import PdfPages
 from PIL import Image
+from pypdf import PdfReader, PdfWriter
 
 # ── Brand ──────────────────────────────────────────────────────────────────────
 TEAL   = '#095972'
@@ -78,6 +79,70 @@ def _strip_class_names(series):
         lambda v: str(v)[len(prefix):].strip(' -').strip()
                   if str(v).startswith(prefix) else v
     )
+
+
+# ── Direct Indexing proposal parsing ────────────────────────────────────────────
+
+_MONEY_RE = re.compile(r'-?\(?\$[\d,]+(?:\.\d+)?\)?')
+
+def _money_str_to_float(s):
+    s = s.strip()
+    neg = s.startswith('-') or (s.startswith('(') and s.endswith(')'))
+    clean = s.replace('$', '').replace(',', '').replace('(', '').replace(')', '').lstrip('-').strip()
+    v = float(clean)
+    return -v if neg else v
+
+def _find_money_after(label, text):
+    """Find `label` in `text` (last occurrence) and return the first dollar
+    figure that appears shortly after it."""
+    idx = text.rfind(label)
+    if idx == -1:
+        return None
+    window = text[idx + len(label): idx + len(label) + 60]
+    m = _MONEY_RE.search(window)
+    return _money_str_to_float(m.group()) if m else None
+
+def _extract_di_figures(di_bytes):
+    """Pull the Net Realized Gains/Losses and Transition Tax Liability figures
+    from the Direct Indexing proposal's Tax Assessment page.
+
+    Returns (gl, tax) — tax may be None if not found; raises ValueError if
+    the G/L figure (the one we actually need) can't be located.
+    """
+    reader = PdfReader(io.BytesIO(di_bytes))
+
+    target_text = None
+    for page in reader.pages:
+        text = page.extract_text() or ''
+        if 'Net Realized Gains/Losses' in text and 'Transition Tax Liability' in text:
+            target_text = text
+            break
+
+    if target_text is None:
+        # Fall back to scanning the whole document
+        target_text = '\n'.join((p.extract_text() or '') for p in reader.pages)
+
+    gl  = _find_money_after('Net Realized Gains/Losses', target_text)
+    tax = _find_money_after('Transition Tax Liability', target_text)
+
+    if gl is None:
+        raise ValueError(
+            'Could not find "Net Realized Gains/Losses" in the Direct '
+            'Indexing proposal PDF — check that the Tax Assessment page is intact.'
+        )
+    return gl, tax
+
+def _merge_pdfs(main_bytes, appendix_bytes):
+    """Append every page of appendix_bytes onto main_bytes, returning one PDF."""
+    writer = PdfWriter()
+    for p in PdfReader(io.BytesIO(main_bytes)).pages:
+        writer.add_page(p)
+    for p in PdfReader(io.BytesIO(appendix_bytes)).pages:
+        writer.add_page(p)
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    return out.read()
 
 
 # ── Drawing helpers ────────────────────────────────────────────────────────────
@@ -251,31 +316,40 @@ def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color='white'):
 
 
 # ── Row height sizing ──────────────────────────────────────────────────────────
-_TAX_PANEL_ROW_H = 0.026
-_TAX_PANEL_ROWS  = 7   # rows in each side-by-side panel (pre / post)
+_TAX_PANEL_ROW_H  = 0.026
+_TAX_PANEL_ROWS   = 7   # rows in the post-transition panel with no DI line
+_TAX_PANEL_ROWS_DI = 8  # +1 for the "Direct Indexing" breakout row
 
-_P1_OVERHEAD = (
-    0.088 + 0.010   # header + gap
-  + 0.026 + 0.010   # model label + gap
-  + 0.088 + 0.018   # cards + gap
-  + 0.037 + 0.008   # AA section label (rule + text) + gap
-  + 0.020           # gap between AA table and tax assessment
-  + 0.037 + 0.008   # tax assessment section label + gap
-  + 0.026           # panel title bars
-  + _TAX_PANEL_ROWS * _TAX_PANEL_ROW_H   # panel content rows
-  + 0.020           # gap after panels
-  + 0.060           # disclaimer + bottom margin
-)
-_P1_AVAIL = (0.96 - 0.06) - _P1_OVERHEAD
+def _p1_overhead(tax_panel_rows):
+    return (
+        0.088 + 0.010   # header + gap
+      + 0.026 + 0.010   # model label + gap
+      + 0.088 + 0.018   # cards + gap
+      + 0.037 + 0.008   # AA section label (rule + text) + gap
+      + 0.020           # gap between AA table and tax assessment
+      + 0.037 + 0.008   # tax assessment section label + gap
+      + 0.026           # panel title bars
+      + tax_panel_rows * _TAX_PANEL_ROW_H   # panel content rows
+      + 0.020           # gap after panels
+      + 0.060           # disclaimer + bottom margin
+    )
 
-def _row_h(n_aa_rows):
+def _row_h(n_aa_rows, has_di=False):
     """Row height that fills the space left for the AA table after fixed overhead."""
-    return min(0.032, _P1_AVAIL / (n_aa_rows + 1))
+    tax_panel_rows = _TAX_PANEL_ROWS_DI if has_di else _TAX_PANEL_ROWS
+    avail = (0.96 - 0.06) - _p1_overhead(tax_panel_rows)
+    return min(0.032, avail / (n_aa_rows + 1))
 
 
 # ── Main PDF function ──────────────────────────────────────────────────────────
 
-def generate_pdf(excel_bytes: bytes, client_name: str) -> bytes:
+def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -> bytes:
+    # Direct Indexing proposal (optional) — parsed up front so any parsing
+    # error surfaces before we spend time building the Eclipse-based pages.
+    di_gl = di_tax = None
+    if di_bytes:
+        di_gl, di_tax = _extract_di_figures(di_bytes)
+
     xlsx = pd.ExcelFile(io.BytesIO(excel_bytes))
 
     required = {
@@ -362,7 +436,6 @@ def generate_pdf(excel_bytes: bytes, client_name: str) -> bytes:
         raise ValueError('Gain Loss Details sheet is empty.')
     cg        = gl_df.iloc[0]
     total_val = ac_df['Account Value'].sum()
-    tax_pct   = (cg['Estimated Tax'] / total_val * 100) if total_val else 0
 
     # Logo
     logo_img = None
@@ -372,7 +445,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str) -> bytes:
         pass
 
     # Adaptive row height for the AA table
-    rh = _row_h(len(aa))
+    rh = _row_h(len(aa), has_di=(di_gl is not None))
 
     buf = io.BytesIO()
     with PdfPages(buf) as pdf:
@@ -396,6 +469,11 @@ def generate_pdf(excel_bytes: bytes, client_name: str) -> bytes:
         # ── Metrics cards ─────────────────────────────────────────────────────
         gl_val   = cg['Trade Total Gain $']
         est_tax  = cg['Estimated Tax']
+        if di_gl is not None:
+            gl_val = gl_val + di_gl
+        if di_tax is not None:
+            est_tax = est_tax + di_tax
+        tax_pct = (est_tax / total_val * 100) if total_val else 0
         def _signed_color(v, positive_bad=False):
             if v > 0:  return RED if positive_bad else GREEN
             if v < 0:  return GREEN if positive_bad else RED
@@ -490,13 +568,20 @@ def generate_pdf(excel_bytes: bytes, client_name: str) -> bytes:
             ('  Gains',         _fv(unrlzd_gains),  False, False),
             ('  Losses',        _fv(unrlzd_losses), False, True),
         ]
+        combined_total = (post_total or 0) + di_gl if di_gl is not None else post_total
+        combined_tax   = (post_tax   or 0) + (di_tax or 0) if di_gl is not None else post_tax
+
         post_rows = [
             ('Realized Gains',        '',               True,  False),
             ('  Long Term',           _fv(post_lt),     False, False),
             ('  Short Term',          _fv(post_st),     False, False),
-            ('Net Realized G/L',      _fv(post_total),  False, False),
+        ]
+        if di_gl is not None:
+            post_rows.append(('  Direct Indexing', _fv(di_gl), False, False))
+        post_rows += [
+            ('Net Realized G/L',      _fv(combined_total),  False, False),
             ('YTD Gain (Post-Trade)', _fv(post_ytd),    False, False),
-            ('Estimated Tax',         _fv(post_tax),    False, True),
+            ('Estimated Tax',         _fv(combined_tax),    False, True),
             ('# of Trades',           n_trades_str,     False, False),
         ]
 
@@ -624,12 +709,38 @@ def generate_pdf(excel_bytes: bytes, client_name: str) -> bytes:
                    hdr_color=hcol)
             y2 -= t_h + 0.028
 
+        # ── Direct Indexing Rebalance (kept separate from buys/sells) ──────────
+        if di_gl is not None:
+            ax_lbl = fig2.add_axes([ML, y2 - 0.026, CW, 0.024])
+            ax_lbl.axis('off')
+            ax_lbl.text(0, 0.35, 'DIRECT INDEXING REBALANCE', fontsize=10, fontweight='bold',
+                        color=TEAL2, va='center', transform=ax_lbl.transAxes)
+            y2 -= 0.026 + 0.008
+
+            di_row = [['DI', 'Direct Indexing Rebalance — See Transition Analysis', _money(di_gl, 2)]]
+            di_h = 2 * trade_rh
+            ax_di = fig2.add_axes([ML, y2 - di_h, CW, di_h])
+            ax_di.axis('off')
+            _table(ax_di, di_row,
+                   col_labels=['Ticker', 'Description', 'Realized G/L'],
+                   col_widths=[0.12, 0.63, 0.25],
+                   fontsize=8.5,
+                   color_cols=[2],
+                   right_cols=[2],
+                   center_cols=[0],
+                   hdr_color=TAN)
+            y2 -= di_h + 0.028
+
         _disclaimer(fig2)
         pdf.savefig(fig2, facecolor=fig2.get_facecolor())
         plt.close(fig2)
 
     buf.seek(0)
-    return buf.read()
+    main_pdf_bytes = buf.read()
+
+    if di_bytes:
+        return _merge_pdfs(main_pdf_bytes, di_bytes)
+    return main_pdf_bytes
 
 
 # ── Vercel handler ─────────────────────────────────────────────────────────────
@@ -643,12 +754,14 @@ class handler(BaseHTTPRequestHandler):
 
             client_name = body.get('client_name', '').strip()
             excel_b64   = body.get('excel_data', '')
+            di_b64      = body.get('di_data', '')
 
             if not client_name or not excel_b64:
                 self._error(400, 'client_name and excel_data are required.')
                 return
 
-            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name)
+            di_bytes = base64.b64decode(di_b64) if di_b64 else None
+            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name, di_bytes)
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/pdf')

@@ -523,31 +523,31 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
         grand_total = total_val                 # already includes the DI account
         core_total  = grand_total - di_amount    # base the Model Tolerance % were computed against
 
-        aa['_cur_$']   = aa['Current %'].fillna(0) / 100 * core_total
-        aa['_tgt_$']   = aa['Target %'].fillna(0)  / 100 * core_total
-        aa['_post_$']  = aa['Post %'].fillna(0)    / 100 * core_total
-        aa['_trade_$'] = aa['Trade $'].fillna(0)
+        aa['_cur_$']  = aa['Current %'].fillna(0) / 100 * core_total
+        aa['_tgt_$']  = aa['Target %'].fillna(0)  / 100 * core_total
+        aa['_post_$'] = aa['Post %'].fillna(0)    / 100 * core_total
+        # Trade $ is left untouched by the DI balance — it's not a real trade
+        # through Eclipse, just money already sitting in/moving into the DI
+        # sleeve. Any actual US Large Cap trade from the core STP sleeve
+        # still shows here unchanged.
 
         mask = aa['Class'].str.strip().str.lower() == 'us large cap'
         if mask.any():
-            aa.loc[mask, '_cur_$']   += di_amount
-            aa.loc[mask, '_tgt_$']   += di_amount
-            aa.loc[mask, '_post_$']  += di_amount
-            aa.loc[mask, '_trade_$'] += di_amount
+            aa.loc[mask, '_cur_$']  += di_amount
+            aa.loc[mask, '_tgt_$']  += di_amount
+            aa.loc[mask, '_post_$'] += di_amount
         else:
             new_row = pd.DataFrame([{
                 'Class': 'US Large Cap', 'Current %': None, 'Target %': None,
                 'Post %': None, 'Trade $': None,
-                '_cur_$': di_amount, '_tgt_$': di_amount,
-                '_post_$': di_amount, '_trade_$': di_amount,
+                '_cur_$': di_amount, '_tgt_$': di_amount, '_post_$': di_amount,
             }])
             aa = pd.concat([aa, new_row], ignore_index=True)
 
         aa['Current %'] = aa['_cur_$']  / grand_total * 100
         aa['Target %']  = aa['_tgt_$']  / grand_total * 100
         aa['Post %']    = aa['_post_$'] / grand_total * 100
-        aa['Trade $']   = aa['_trade_$']
-        aa = aa.drop(columns=['_cur_$', '_tgt_$', '_post_$', '_trade_$'])
+        aa = aa.drop(columns=['_cur_$', '_tgt_$', '_post_$'])
         aa = aa.sort_values('Target %', ascending=False).reset_index(drop=True)
 
     # Logo

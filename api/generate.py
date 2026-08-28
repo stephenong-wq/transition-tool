@@ -465,9 +465,17 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
                 break
         target_model = trimmed if trimmed else candidates[0]
 
-    # Strip trailing parenthetical qualifiers, e.g. "STP - Moderately
-    # Aggressive (ex-USLC)" -> "STP - Moderately Aggressive"
-    target_model = re.sub(r'\s*\([^)]*\)\s*$', '', target_model).strip()
+    # Strip trailing qualifiers like "(TA)" or "ex-USLC" (with or without
+    # parentheses, in any order) — e.g. "STP - 70/30 ex-USLC (TA)" or
+    # "STP - Moderately Aggressive (ex-USLC)" both -> "STP - 70/30" /
+    # "STP - Moderately Aggressive".
+    while True:
+        stripped = re.sub(r'\s*\([^)]*\)\s*$', '', target_model)               # trailing "(...)"
+        stripped = re.sub(r'\s*-?\s*ex[-\s]?uslc\s*$', '', stripped, flags=re.IGNORECASE)  # trailing "ex-USLC"
+        stripped = stripped.strip()
+        if stripped == target_model:
+            break
+        target_model = stripped
 
     # Asset allocation — strip common prefix so "Savvy Strategic 60/40 US Equity"
     # becomes "US Equity" regardless of which model is in the file.

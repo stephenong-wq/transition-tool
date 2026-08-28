@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Transition Analysis | Savvy</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -108,6 +109,24 @@ input[type="text"] {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 input[type="text"]:focus {
+  border-color: var(--teal-dark);
+  box-shadow: 0 0 0 3px rgba(9,89,114,0.1);
+}
+
+select {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--tan-light);
+  border-radius: 5px;
+  font-size: 14px;
+  background: white;
+  color: var(--teal-dark);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  cursor: pointer;
+}
+select:focus {
   border-color: var(--teal-dark);
   box-shadow: 0 0 0 3px rgba(9,89,114,0.1);
 }
@@ -312,6 +331,13 @@ input[type="text"]:focus {
         </div>
       </div>
 
+      <div class="field-group" id="diAccountGroup" style="display:none;">
+        <label class="field-label" for="diAccountSelect">Which account is the Direct Indexing sleeve?</label>
+        <select id="diAccountSelect">
+          <option value="">Select account…</option>
+        </select>
+      </div>
+
       <hr class="divider">
 
       <button class="btn-generate" id="generateBtn" disabled onclick="generate()">
@@ -355,6 +381,8 @@ input[type="text"]:focus {
   const diFileInputEl = document.getElementById('diFileInput');
   const diFileNameEl  = document.getElementById('diFileName');
   const diDropZoneEl  = document.getElementById('diDropZone');
+  const diAccountGroup  = document.getElementById('diAccountGroup');
+  const diAccountSelect = document.getElementById('diAccountSelect');
   const generateBtn  = document.getElementById('generateBtn');
   const statusBox    = document.getElementById('statusBox');
   const statusText   = document.getElementById('statusText');
@@ -364,9 +392,73 @@ input[type="text"]:focus {
   let selectedFile = null;
   let selectedDiFile = null; // optional
 
-  function updateGenerateBtn() {
-    generateBtn.disabled = !(clientNameEl.value.trim() && selectedFile);
+  function findHeader(headers, ...candidates) {
+    for (const c of candidates) {
+      const hit = headers.find(h => String(h).toLowerCase().includes(c.toLowerCase()));
+      if (hit) return hit;
+    }
+    return null;
   }
+
+  // Parse the Eclipse export client-side to find sleeved accounts (account
+  // numbers containing "_") so the user can pick which one is the DI sleeve.
+  async function findSleevedAccounts(file) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('account and cash details'));
+    if (!sheetName) return [];
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
+    if (!rows.length) return [];
+    const headers = Object.keys(rows[0]);
+    const acctCol = findHeader(headers, 'account number', 'account num', 'acct number');
+    const regCol  = findHeader(headers, 'reg type', 'registration type', 'reg. type');
+    const valCol  = findHeader(headers, 'account value', 'acct value', 'market value');
+    if (!acctCol) return [];
+
+    const out = [];
+    for (const r of rows) {
+      const raw = String(r[acctCol] ?? '').trim();
+      if (raw.includes('_')) {
+        out.push({ account: raw, reg: regCol ? r[regCol] : '', value: valCol ? r[valCol] : null });
+      }
+    }
+    return out;
+  }
+
+  async function refreshDiAccountOptions() {
+    if (!selectedFile || !selectedDiFile) {
+      diAccountGroup.style.display = 'none';
+      diAccountSelect.innerHTML = '<option value="">Select account…</option>';
+      updateGenerateBtn();
+      return;
+    }
+    diAccountGroup.style.display = 'block';
+    diAccountSelect.innerHTML = '<option value="">Loading accounts…</option>';
+    try {
+      const accounts = await findSleevedAccounts(selectedFile);
+      if (!accounts.length) {
+        diAccountSelect.innerHTML = '<option value="">No sleeved accounts found in this export</option>';
+      } else {
+        diAccountSelect.innerHTML = '<option value="">Select account…</option>' +
+          accounts.map(a => {
+            const valueStr = a.value != null ? ` — $${Number(a.value).toLocaleString()}` : '';
+            const regStr = a.reg ? ` — ${a.reg}` : '';
+            return `<option value="${a.account}">${a.account}${regStr}${valueStr}</option>`;
+          }).join('');
+      }
+    } catch (e) {
+      diAccountSelect.innerHTML = '<option value="">Could not read accounts from file</option>';
+    }
+    updateGenerateBtn();
+  }
+
+  function updateGenerateBtn() {
+    const needsDiAccount = !!selectedDiFile;
+    const diAccountOk = !needsDiAccount || !!diAccountSelect.value;
+    generateBtn.disabled = !(clientNameEl.value.trim() && selectedFile && diAccountOk);
+  }
+
+  diAccountSelect.addEventListener('change', updateGenerateBtn);
 
   clientNameEl.addEventListener('input', updateGenerateBtn);
 
@@ -375,7 +467,7 @@ input[type="text"]:focus {
       selectedFile = fileInputEl.files[0];
       fileNameEl.textContent = selectedFile.name;
     }
-    updateGenerateBtn();
+    refreshDiAccountOptions();
   });
 
   diFileInputEl.addEventListener('change', () => {
@@ -383,6 +475,7 @@ input[type="text"]:focus {
       selectedDiFile = diFileInputEl.files[0];
       diFileNameEl.textContent = selectedDiFile.name;
     }
+    refreshDiAccountOptions();
   });
 
   // Drag-and-drop — main Eclipse export
@@ -395,7 +488,7 @@ input[type="text"]:focus {
     if (f && f.name.endsWith('.xlsx')) {
       selectedFile = f;
       fileNameEl.textContent = f.name;
-      updateGenerateBtn();
+      refreshDiAccountOptions();
     }
   });
 
@@ -409,6 +502,7 @@ input[type="text"]:focus {
     if (f && f.name.endsWith('.pdf')) {
       selectedDiFile = f;
       diFileNameEl.textContent = f.name;
+      refreshDiAccountOptions();
     }
   });
 
@@ -432,6 +526,7 @@ input[type="text"]:focus {
 
       if (selectedDiFile) {
         payload.di_data = await fileToBase64(selectedDiFile);
+        payload.di_account = diAccountSelect.value;
       }
 
       const response = await fetch('/api/generate', {

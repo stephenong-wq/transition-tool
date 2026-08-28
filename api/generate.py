@@ -140,6 +140,16 @@ def _extract_di_figures(di_bytes):
     """
     reader = PdfReader(io.BytesIO(di_bytes))
 
+    first_page_text = reader.pages[0].extract_text() or ''
+    if 'Portfolio Transition Analysis' in first_page_text and 'Savvy Advisors' in first_page_text:
+        raise ValueError(
+            'The Direct Indexing file looks like a previously generated '
+            'Transition Analysis report (it has our own "Portfolio Transition '
+            'Analysis" header on page 1), not the original Direct Indexing '
+            'proposal PDF from the provider. Please re-upload the original '
+            'DI proposal file.'
+        )
+
     target_text = None
     for page in reader.pages:
         text = page.extract_text() or ''
@@ -454,6 +464,10 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
                 trimmed = cp[:idx].strip()
                 break
         target_model = trimmed if trimmed else candidates[0]
+
+    # Strip trailing parenthetical qualifiers, e.g. "STP - Moderately
+    # Aggressive (ex-USLC)" -> "STP - Moderately Aggressive"
+    target_model = re.sub(r'\s*\([^)]*\)\s*$', '', target_model).strip()
 
     # Asset allocation — strip common prefix so "Savvy Strategic 60/40 US Equity"
     # becomes "US Equity" regardless of which model is in the file.

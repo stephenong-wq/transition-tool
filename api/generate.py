@@ -519,6 +519,8 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
                 'Cash Details sheet to compute the Direct Indexing allocation.'
             )
 
+    di_only_large_cap = False   # True if US Large Cap has no real trade of its own — only DI is touching it
+
     if di_amount:
         grand_total = total_val                 # already includes the DI account
         core_total  = grand_total - di_amount    # base the Model Tolerance % were computed against
@@ -536,6 +538,8 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
             aa.loc[mask, '_cur_$']  += di_amount
             aa.loc[mask, '_tgt_$']  += di_amount
             aa.loc[mask, '_post_$'] += di_amount
+            existing_trade = aa.loc[mask, 'Trade $'].iloc[0]
+            di_only_large_cap = pd.isna(existing_trade) or existing_trade == 0
         else:
             new_row = pd.DataFrame([{
                 'Class': 'US Large Cap', 'Current %': None, 'Target %': None,
@@ -543,6 +547,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
                 '_cur_$': di_amount, '_tgt_$': di_amount, '_post_$': di_amount,
             }])
             aa = pd.concat([aa, new_row], ignore_index=True)
+            di_only_large_cap = True
 
         aa['Current %'] = aa['_cur_$']  / grand_total * 100
         aa['Target %']  = aa['_tgt_$']  / grand_total * 100
@@ -625,12 +630,17 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
         aa_rows = []
         for _, r in aa.iterrows():
             t = r['Trade $']
+            is_di_only_row = (di_only_large_cap and r['Class'].strip().lower() == 'us large cap')
+            if is_di_only_row:
+                trade_str = 'See Transition Analysis'
+            else:
+                trade_str = '—' if (pd.isna(t) or t == 0) else _money(t)
             aa_rows.append([
                 _trunc(r['Class'], 38),
                 f"{r['Current %']:.1f}%",
                 f"{r['Target %']:.1f}%",
                 f"{r['Post %']:.1f}%",
-                '—' if (pd.isna(t) or t == 0) else _money(t),
+                trade_str,
             ])
         _table(ax_aa, aa_rows,
                col_labels=['Asset Class', 'Current %', 'Target %', 'Post-Trade %', 'Trade Amount'],

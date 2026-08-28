@@ -41,6 +41,30 @@ def _money(v, decimals=0):
     fmt = f',.{decimals}f'
     return f'-${abs(v):{fmt}}' if v < 0 else f'${v:{fmt}}'
 
+def _mask_account(raw):
+    """Mask an account number to its last 4 digits, e.g. '90123456' -> '3456'.
+
+    Sleeved accounts (containing '_', e.g. '3177_01') keep their sleeve
+    suffix visible: '3177_01' -> '3177_01' masked base -> '...' ->
+    returns '3177_01' with only the base portion truncated, e.g. '7177_01'
+    stays legible instead of the suffix swallowing the base digits.
+    """
+    raw = str(raw).strip()
+    if '_' in raw:
+        base, suffix = raw.split('_', 1)
+        base = base.split('.')[0]
+        base_masked = base[-4:] if len(base) >= 4 else base
+        return f'{base_masked}_{suffix}'
+    base = raw.split('.')[0]
+    return base[-4:] if len(base) >= 4 else base
+
+def _find_col(df, *candidates):
+    for c in candidates:
+        for col in df.columns:
+            if c.lower() == col.lower() or c.lower() in col.lower():
+                return col
+    return None
+
 def _strip_class_names(series):
     """Strip model prefix from asset class names.
 
@@ -155,12 +179,18 @@ def _extract_di_figures(di_bytes):
         )
     return gl, tax, lt, st
 
-def _merge_pdfs(main_bytes, appendix_bytes):
-    """Append every page of appendix_bytes onto main_bytes, returning one PDF."""
+def _merge_pdfs(main_bytes, appendix_bytes, skip_appendix_pages=()):
+    """Append pages of appendix_bytes onto main_bytes, returning one PDF.
+
+    skip_appendix_pages — 0-indexed page numbers of the appendix to omit
+    (e.g. generic marketing pages not needed once the reports are combined).
+    """
     writer = PdfWriter()
     for p in PdfReader(io.BytesIO(main_bytes)).pages:
         writer.add_page(p)
-    for p in PdfReader(io.BytesIO(appendix_bytes)).pages:
+    for i, p in enumerate(PdfReader(io.BytesIO(appendix_bytes)).pages):
+        if i in skip_appendix_pages:
+            continue
         writer.add_page(p)
     out = io.BytesIO()
     writer.write(out)
@@ -363,7 +393,8 @@ def _row_h(n_aa_rows):
 
 # ── Main PDF function ──────────────────────────────────────────────────────────
 
-def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -> bytes:
+def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
+                  di_account: str = None) -> bytes:
     # Direct Indexing proposal (optional) — parsed up front so any parsing
     # error surfaces before we spend time building the Eclipse-based pages.
     di_gl = di_tax = di_lt = di_st = None
@@ -438,8 +469,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
     trades = trades[~trades['Ticker'].astype(str).str.contains(
         'CUSTODIAL_CASH', case=False, na=False)]
     trades['abs_trade'] = trades['Trade $'].abs()
-    trades['Acct4'] = (trades['Account Number'].astype(str)
-                       .str.split('.').str[0].str[-4:])
+    trades['Acct4'] = trades['Account Number'].apply(_mask_account)
     if 'Trade G/L $' not in trades.columns:
         trades['Trade G/L $'] = 0.0
     trades['Trade G/L $'] = trades['Trade G/L $'].fillna(0)
@@ -456,6 +486,55 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         raise ValueError('Gain Loss Details sheet is empty.')
     cg        = gl_df.iloc[0]
     total_val = ac_df['Account Value'].sum()
+
+    # ── Direct Indexing account: fold its balance into the Asset Allocation
+    # table (as "US Large Cap") and rebase every row's percentages against
+    # the combined total, since the DI sleeve isn't part of the Model
+    # Tolerance sheet at all.
+    di_amount = None
+    if di_account:
+        acct_num_col = _find_col(ac_df, 'Account Number', 'Account Num', 'Acct Number')
+        val_col      = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
+        if acct_num_col and val_col:
+            match = ac_df[ac_df[acct_num_col].astype(str).str.strip() == str(di_account).strip()]
+            if not match.empty:
+                di_amount = float(match[val_col].sum())
+        if di_amount is None:
+            raise ValueError(
+                f'Could not find account "{di_account}" in the Account and '
+                'Cash Details sheet to compute the Direct Indexing allocation.'
+            )
+
+    if di_amount:
+        grand_total = total_val                 # already includes the DI account
+        core_total  = grand_total - di_amount    # base the Model Tolerance % were computed against
+
+        aa['_cur_$']   = aa['Current %'].fillna(0) / 100 * core_total
+        aa['_tgt_$']   = aa['Target %'].fillna(0)  / 100 * core_total
+        aa['_post_$']  = aa['Post %'].fillna(0)    / 100 * core_total
+        aa['_trade_$'] = aa['Trade $'].fillna(0)
+
+        mask = aa['Class'].str.strip().str.lower() == 'us large cap'
+        if mask.any():
+            aa.loc[mask, '_cur_$']   += di_amount
+            aa.loc[mask, '_tgt_$']   += di_amount
+            aa.loc[mask, '_post_$']  += di_amount
+            aa.loc[mask, '_trade_$'] += di_amount
+        else:
+            new_row = pd.DataFrame([{
+                'Class': 'US Large Cap', 'Current %': None, 'Target %': None,
+                'Post %': None, 'Trade $': None,
+                '_cur_$': di_amount, '_tgt_$': di_amount,
+                '_post_$': di_amount, '_trade_$': di_amount,
+            }])
+            aa = pd.concat([aa, new_row], ignore_index=True)
+
+        aa['Current %'] = aa['_cur_$']  / grand_total * 100
+        aa['Target %']  = aa['_tgt_$']  / grand_total * 100
+        aa['Post %']    = aa['_post_$'] / grand_total * 100
+        aa['Trade $']   = aa['_trade_$']
+        aa = aa.drop(columns=['_cur_$', '_tgt_$', '_post_$', '_trade_$'])
+        aa = aa.sort_values('Target %', ascending=False).reset_index(drop=True)
 
     # Logo
     logo_img = None
@@ -629,13 +708,6 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         y2 -= 0.005
 
         # ── Account breakdown ──────────────────────────────────────────────────
-        def _find_col(df, *candidates):
-            for c in candidates:
-                for col in df.columns:
-                    if c.lower() == col.lower() or c.lower() in col.lower():
-                        return col
-            return None
-
         acct_num_col   = _find_col(ac_df, 'Account Number', 'Account Num', 'Acct Number')
         reg_type_col   = _find_col(ac_df, 'Reg Type', 'Registration Type', 'Reg. Type')
         acct_val_col   = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
@@ -646,8 +718,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
             if not ac_show.empty:
                 acct_rows_p2 = []
                 for _, r in ac_show.iterrows():
-                    raw_acct = str(r[acct_num_col]).split('.')[0]
-                    acct_str = f'x{raw_acct[-4:]}' if len(raw_acct) >= 4 else raw_acct
+                    acct_str = f'x{_mask_account(r[acct_num_col])}'
                     reg  = str(r[reg_type_col]).strip() if reg_type_col else '—'
                     val  = _money(r[acct_val_col]) if not pd.isna(r[acct_val_col]) else '—'
                     acct_rows_p2.append([acct_str, reg, val])
@@ -761,7 +832,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
     main_pdf_bytes = buf.read()
 
     if di_bytes:
-        return _merge_pdfs(main_pdf_bytes, di_bytes)
+        return _merge_pdfs(main_pdf_bytes, di_bytes, skip_appendix_pages={1, 2, 3})
     return main_pdf_bytes
 
 
@@ -777,13 +848,14 @@ class handler(BaseHTTPRequestHandler):
             client_name = body.get('client_name', '').strip()
             excel_b64   = body.get('excel_data', '')
             di_b64      = body.get('di_data', '')
+            di_account  = body.get('di_account', '').strip() or None
 
             if not client_name or not excel_b64:
                 self._error(400, 'client_name and excel_data are required.')
                 return
 
             di_bytes = base64.b64decode(di_b64) if di_b64 else None
-            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name, di_bytes)
+            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name, di_bytes, di_account)
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/pdf')

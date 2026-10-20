@@ -403,8 +403,7 @@ def _row_h(n_aa_rows):
 
 # ── Main PDF function ──────────────────────────────────────────────────────────
 
-def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
-                  di_account: str = None) -> bytes:
+def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -> bytes:
     # Direct Indexing proposal (optional) — parsed up front so any parsing
     # error surfaces before we spend time building the Eclipse-based pages.
     di_gl = di_tax = di_lt = di_st = None
@@ -479,6 +478,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
 
     # Asset allocation — strip common prefix so "Savvy Strategic 60/40 US Equity"
     # becomes "US Equity" regardless of which model is in the file.
+    # Percentages are taken at face value from the Model Tolerance sheet.
     aa = mt_df[['Class', 'Current %', 'Target %', 'Post %', 'Trade $']].copy()
     aa['Class'] = aa['Class'].str.strip()
     aa['Class'] = _strip_class_names(aa['Class'])
@@ -509,59 +509,14 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
     cg        = gl_df.iloc[0]
     total_val = ac_df['Account Value'].sum()
 
-    # ── Direct Indexing account: fold its balance into the Asset Allocation
-    # table (as "US Large Cap") and rebase every row's percentages against
-    # the combined total, since the DI sleeve isn't part of the Model
-    # Tolerance sheet at all.
-    di_amount = None
-    if di_account:
-        acct_num_col = _find_col(ac_df, 'Account Number', 'Account Num', 'Acct Number')
-        val_col      = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
-        if acct_num_col and val_col:
-            match = ac_df[ac_df[acct_num_col].astype(str).str.strip() == str(di_account).strip()]
-            if not match.empty:
-                di_amount = float(match[val_col].sum())
-        if di_amount is None:
-            raise ValueError(
-                f'Could not find account "{di_account}" in the Account and '
-                'Cash Details sheet to compute the Direct Indexing allocation.'
-            )
-
-    di_only_large_cap = False   # True if US Large Cap has no real trade of its own — only DI is touching it
-
-    if di_amount:
-        grand_total = total_val                 # already includes the DI account
-        core_total  = grand_total - di_amount    # base the Model Tolerance % were computed against
-
-        aa['_cur_$']  = aa['Current %'].fillna(0) / 100 * core_total
-        aa['_tgt_$']  = aa['Target %'].fillna(0)  / 100 * core_total
-        aa['_post_$'] = aa['Post %'].fillna(0)    / 100 * core_total
-        # Trade $ is left untouched by the DI balance — it's not a real trade
-        # through Eclipse, just money already sitting in/moving into the DI
-        # sleeve. Any actual US Large Cap trade from the core STP sleeve
-        # still shows here unchanged.
-
+    # If a DI proposal is attached and the core sleeve has no US Large Cap
+    # trade of its own, label that row "See Transition Analysis".
+    di_only_large_cap = False
+    if di_gl is not None:
         mask = aa['Class'].str.strip().str.lower() == 'us large cap'
         if mask.any():
-            aa.loc[mask, '_cur_$']  += di_amount
-            aa.loc[mask, '_tgt_$']  += di_amount
-            aa.loc[mask, '_post_$'] += di_amount
-            existing_trade = aa.loc[mask, 'Trade $'].iloc[0]
-            di_only_large_cap = pd.isna(existing_trade) or existing_trade == 0
-        else:
-            new_row = pd.DataFrame([{
-                'Class': 'US Large Cap', 'Current %': None, 'Target %': None,
-                'Post %': None, 'Trade $': None,
-                '_cur_$': di_amount, '_tgt_$': di_amount, '_post_$': di_amount,
-            }])
-            aa = pd.concat([aa, new_row], ignore_index=True)
-            di_only_large_cap = True
-
-        aa['Current %'] = aa['_cur_$']  / grand_total * 100
-        aa['Target %']  = aa['_tgt_$']  / grand_total * 100
-        aa['Post %']    = aa['_post_$'] / grand_total * 100
-        aa = aa.drop(columns=['_cur_$', '_tgt_$', '_post_$'])
-        aa = aa.sort_values('Target %', ascending=False).reset_index(drop=True)
+            t = aa.loc[mask, 'Trade $'].iloc[0]
+            di_only_large_cap = pd.isna(t) or t == 0
 
     # Logo
     logo_img = None
@@ -880,14 +835,13 @@ class handler(BaseHTTPRequestHandler):
             client_name = body.get('client_name', '').strip()
             excel_b64   = body.get('excel_data', '')
             di_b64      = body.get('di_data', '')
-            di_account  = body.get('di_account', '').strip() or None
 
             if not client_name or not excel_b64:
                 self._error(400, 'client_name and excel_data are required.')
                 return
 
             di_bytes = base64.b64decode(di_b64) if di_b64 else None
-            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name, di_bytes, di_account)
+            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name, di_bytes)
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/pdf')

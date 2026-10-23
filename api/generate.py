@@ -403,6 +403,59 @@ def _row_h(n_aa_rows):
 
 # ── Main PDF function ──────────────────────────────────────────────────────────
 
+_SMA_CLASS_RE = r'equity[\s\-]*sma'
+
+def list_accounts(excel_bytes: bytes) -> dict:
+    """List the accounts in an Eclipse export so the upload page can offer a
+    Direct Indexing account picker. Empty accounts (e.g. unused sleeves such
+    as *_Contribution / *_Distribution) are left out.
+
+    Returns {'accounts': [{account, reg, value, sleeved}, ...],
+             'has_equity_sma': bool}
+    """
+    xlsx = pd.ExcelFile(io.BytesIO(excel_bytes))
+
+    def _sheet(name):
+        found = next((n for n in xlsx.sheet_names if name.lower() in n.lower()), None)
+        return pd.read_excel(xlsx, sheet_name=found) if found else None
+
+    ac_df = _sheet('Account and Cash Details')
+    if ac_df is None:
+        sheets = ', '.join(f'"{n}"' for n in xlsx.sheet_names)
+        raise ValueError(f'Could not find sheet "Account and Cash Details". Sheets in file: {sheets}')
+
+    acct_col = _find_col(ac_df, 'Account Number', 'Account Num', 'Acct Number')
+    reg_col  = _find_col(ac_df, 'Reg Type', 'Registration Type', 'Reg. Type')
+    val_col  = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
+    if not acct_col:
+        raise ValueError('Could not find an Account Number column in "Account and Cash Details".')
+
+    accounts, seen = [], set()
+    for _, r in ac_df.iterrows():
+        raw = re.sub(r'\.0+$', '', str(r[acct_col]).strip())
+        if not raw or raw.lower() == 'nan' or raw in seen:
+            continue
+        value = None
+        if val_col is not None and not pd.isna(r[val_col]):
+            value = float(r[val_col])
+        if not value:            # skip $0 / blank accounts
+            continue
+        seen.add(raw)
+        accounts.append({
+            'account': raw,
+            'reg': str(r[reg_col]).strip() if reg_col is not None and not pd.isna(r[reg_col]) else '',
+            'value': value,
+            'sleeved': '_' in raw,
+        })
+
+    mt_df = _sheet('Model Tolerance')
+    has_sma = bool(
+        mt_df is not None and 'Class' in mt_df.columns and
+        mt_df['Class'].astype(str).str.contains(_SMA_CLASS_RE, case=False, regex=True).any()
+    )
+    return {'accounts': accounts, 'has_equity_sma': has_sma}
+
+
 def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
                   di_account: str = None) -> bytes:
     # Direct Indexing proposal (optional) — parsed up front so any parsing
@@ -522,8 +575,8 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
     # the combined total, since the DI sleeve isn't part of the Model
     # Tolerance sheet at all.
     di_amount = None
-    sleeved_di = bool(di_account) and '_' in str(di_account) and not has_sma_class
-    if sleeved_di:
+    merge_di = bool(di_account) and not has_sma_class
+    if merge_di:
         acct_num_col = _find_col(ac_df, 'Account Number', 'Account Num', 'Acct Number')
         val_col      = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
         if acct_num_col and val_col:
@@ -908,6 +961,20 @@ class handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get('Content-Length', 0))
             body   = json.loads(self.rfile.read(length))
+
+            # Lightweight mode used by the upload page to populate the
+            # Direct Indexing account picker.
+            if body.get('mode') == 'accounts':
+                if not body.get('excel_data'):
+                    self._error(400, 'excel_data is required.')
+                    return
+                payload = json.dumps(list_accounts(base64.b64decode(body['excel_data']))).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
 
             client_name = body.get('client_name', '').strip()
             excel_b64   = body.get('excel_data', '')

@@ -9,53 +9,22 @@ from datetime import date
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib import font_manager
 from matplotlib.backends.backend_pdf import PdfPages
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
-# ── Brand (Savvy Brand Guidelines v1.0) ────────────────────────────────────────
-# Primary palette
-WHITE      = '#FFFFFF'
-BLACK      = '#000000'
-VANILLA    = '#FFF8F1'
-ECRU       = '#C7BCA1'
-SAVVY_GOLD = '#8E7E57'
-# Secondary palette (used for data and accent bars only)
-DEEP_GREEN = '#175242'
-DEEP_BLUE  = '#095972'
-RED        = '#B63D35'
-
-GAIN = DEEP_GREEN
-LOSS = RED
+# ── Brand ──────────────────────────────────────────────────────────────────────
+TEAL   = '#095972'
+TEAL2  = '#175242'
+TAN    = '#8E7E57'
+TAN2   = '#C7BCA1'
+CREAM  = '#FFF8F1'
+CREAM2 = '#F5F2EC'
+MUTED  = '#89837C'
+RED    = '#B63D35'
+GREEN  = '#175242'
 
 LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'savvy_logo.png')
-FONT_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'fonts')
-
-def _setup_fonts():
-    """Register brand fonts from /fonts (TTF) and pick the best available.
-
-    Primary typeface: Diatype. Secondary (headline serif): Big Caslon.
-    Falls back to close substitutes, then matplotlib's DejaVu.
-    """
-    if os.path.isdir(FONT_DIR):
-        for f in os.listdir(FONT_DIR):
-            if f.lower().endswith(('.ttf', '.otf')):
-                try:
-                    font_manager.fontManager.addfont(os.path.join(FONT_DIR, f))
-                except Exception:
-                    pass
-    names = {f.name for f in font_manager.fontManager.ttflist}
-    sans = next((n for n in ['ABC Diatype', 'Diatype', 'Inter', 'Helvetica Neue',
-                             'Helvetica', 'Arial'] if n in names), 'DejaVu Sans')
-    serif = next((n for n in ['Big Caslon', 'Big Caslon FB', 'Libre Caslon Text',
-                              'Libre Caslon Display'] if n in names), sans)
-    plt.rcParams['font.family'] = sans
-    plt.rcParams['text.color']  = BLACK
-    plt.rcParams['pdf.fonttype'] = 42   # embed TrueType so text stays selectable
-    return sans, serif
-
-SANS, SERIF = _setup_fonts()
 
 PAGE_W, PAGE_H = 8.5, 11.0
 ML, MR = 0.07, 0.93      # left / right margin as figure fractions
@@ -246,14 +215,14 @@ def _header(fig, y_top, client_name, title, logo_img):
     h = 0.088
     ax = fig.add_axes([ML, y_top - h, CW, h])
     ax.axis('off')
-    ax.text(0, 0.97, title, fontsize=22, fontweight='bold', color=BLACK,
-            fontfamily=SERIF, transform=ax.transAxes, va='top')
-    ax.text(0, 0.48, f'Client: {client_name}', fontsize=9, color=BLACK,
+    ax.text(0, 0.97, title, fontsize=20, fontweight='bold', color=TEAL,
+            transform=ax.transAxes, va='top')
+    ax.text(0, 0.48, f'Client: {client_name}', fontsize=9, color=MUTED,
             transform=ax.transAxes)
     report_date = date.today().strftime('%B %d, %Y')
     ax.text(0, 0.24, f'Prepared by Savvy Advisors  ·  {report_date}',
-            fontsize=8, color=BLACK, transform=ax.transAxes)
-    ax.axhline(y=0.02, color=ECRU, linewidth=0.8)
+            fontsize=8, color=TAN2, transform=ax.transAxes)
+    ax.axhline(y=0.02, color=TAN2, linewidth=0.8)
     if logo_img:
         lax = fig.add_axes([0.71, y_top - 0.062, 0.21, 0.054])
         lax.axis('off')
@@ -265,18 +234,18 @@ def _section_hdr(fig, y, text):
     # Hairline rule
     ax_rule = fig.add_axes([ML, y - 0.003, CW, 0.002])
     ax_rule.axis('off')
-    ax_rule.axhline(y=0.5, color=ECRU, linewidth=0.6)
+    ax_rule.axhline(y=0.5, color=TAN2, linewidth=0.6)
     # Label
     h = 0.026
     ax = fig.add_axes([ML, y - 0.003 - h, CW, h])
     ax.axis('off')
-    ax.text(0, 0.35, text, fontsize=9, fontweight='bold', color=BLACK,
+    ax.text(0, 0.35, text, fontsize=9, fontweight='bold', color=TEAL2,
             va='center', transform=ax.transAxes)
     return y - 0.003 - h - 0.008
 
 def _table(ax, rows, col_labels, col_widths, fontsize=8.5,
            color_cols=None, right_cols=None, center_cols=None,
-           hdr_color=ECRU, hdr_text_color=BLACK):
+           hdr_color=TAN):
     """Render a styled table filling the given axes via bbox=[0,0,1,1]."""
     color_cols  = set(color_cols  or [])
     right_cols  = set(right_cols  or [])
@@ -292,14 +261,14 @@ def _table(ax, rows, col_labels, col_widths, fontsize=8.5,
     for (r, c), cell in tbl.get_celld().items():
         if r == 0:
             cell.set_facecolor(hdr_color)
-            cell.set_text_props(color=hdr_text_color, weight='bold')
+            cell.set_text_props(color='white', weight='bold')
             cell.get_text().set_ha('center')
             cell.set_edgecolor(hdr_color)  # blend border into fill
         else:
-            cell.set_facecolor(VANILLA if r % 2 == 0 else WHITE)
+            cell.set_facecolor(CREAM if r % 2 == 0 else 'white')
             # Bottom separator only — no cell borders
             cell.visible_edges = 'B' if r < n_data_rows else ''
-            cell.set_edgecolor(ECRU)
+            cell.set_edgecolor('#D6CFC4')
             cell.set_linewidth(0.5)
             txt = cell.get_text().get_text()
             if c in right_cols:
@@ -314,10 +283,10 @@ def _table(ax, rows, col_labels, col_widths, fontsize=8.5,
                     if negative:
                         v = -v
                     if v > 0:
-                        cell.get_text().set_color(GAIN)
+                        cell.get_text().set_color(GREEN)
                         cell.get_text().set_weight('bold')
                     elif v < 0:
-                        cell.get_text().set_color(LOSS)
+                        cell.get_text().set_color(RED)
                         cell.get_text().set_weight('bold')
                 except (ValueError, TypeError):
                     pass
@@ -326,13 +295,13 @@ def _table(ax, rows, col_labels, col_widths, fontsize=8.5,
 def _disclaimer(fig):
     ax = fig.add_axes([ML, 0.028, CW, 0.028])
     ax.axis('off')
-    ax.axhline(y=1.0, color=ECRU, linewidth=0.5)
+    ax.axhline(y=1.0, color=TAN2, linewidth=0.5)
     ax.text(0, 0.25,
             'This analysis is for internal advisory use only. '
             'Tax estimates are approximate and do not constitute tax advice.',
-            fontsize=7, color=BLACK, transform=ax.transAxes)
+            fontsize=7, color=TAN2, transform=ax.transAxes)
 
-def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color=WHITE):
+def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color='white'):
     """Draw a labeled two-column panel (label | value) for tax assessment.
 
     rows: list of (label, value_str, is_section, positive_bad)
@@ -355,9 +324,9 @@ def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color=WHITE):
 
     # Content box
     ax_c = fig.add_axes([x, y - title_h - title_gap - c_h, w, c_h])
-    ax_c.set_facecolor(WHITE)
+    ax_c.set_facecolor('white')
     for sp in ax_c.spines.values():
-        sp.set_edgecolor(ECRU); sp.set_linewidth(0.5)
+        sp.set_edgecolor(TAN2); sp.set_linewidth(0.5)
     ax_c.axis('off')
     ax_c.set_xlim(0, 1); ax_c.set_ylim(0, 1)
 
@@ -372,7 +341,7 @@ def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color=WHITE):
         yf    = (y_bot + y_top) / 2
 
         # Alternating row background
-        bg = VANILLA if i % 2 == 0 else WHITE
+        bg = CREAM if i % 2 == 0 else 'white'
         ax_c.add_patch(mpatches.Rectangle((0, y_bot), 1.0, 1.0 / n,
                                            facecolor=bg, linewidth=0,
                                            transform=ax_c.transAxes))
@@ -381,7 +350,7 @@ def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color=WHITE):
         size   = 8.0 if is_sec else 7.5
         indent = 0.03 if is_sec else 0.09
         ax_c.text(indent, yf, lbl, fontsize=size, fontweight=weight,
-                  color=BLACK,
+                  color=TEAL2 if is_sec else '#2A2520',
                   va='center', transform=ax_c.transAxes)
 
         if val and val not in ('', '—'):
@@ -389,21 +358,21 @@ def _tax_panel(fig, x, y, w, rows, title, hdr_color, title_text_color=WHITE):
                 clean = (val.replace('$', '').replace(',', '')
                              .replace('(', '-').replace(')', '').strip())
                 fv = float(clean)
-                if fv > 0:   v_color = LOSS if pos_bad else GAIN
-                elif fv < 0: v_color = GAIN if pos_bad else LOSS
-                else:         v_color = BLACK
+                if fv > 0:   v_color = RED if pos_bad else GREEN
+                elif fv < 0: v_color = GREEN if pos_bad else RED
+                else:         v_color = MUTED
             except ValueError:
-                v_color = BLACK
+                v_color = MUTED
             ax_c.text(0.97, yf, val, fontsize=size, fontweight=weight,
                       color=v_color, ha='right', va='center',
                       transform=ax_c.transAxes)
         elif val == '—':
-            ax_c.text(0.97, yf, '—', fontsize=size, color=BLACK,
+            ax_c.text(0.97, yf, '—', fontsize=size, color=MUTED,
                       ha='right', va='center', transform=ax_c.transAxes)
 
         # Hairline rule below section header rows
         if is_sec and i < n - 1:
-            ax_c.plot([0, 1], [y_bot, y_bot], color=ECRU, linewidth=0.4,
+            ax_c.plot([0, 1], [y_bot, y_bot], color=TAN2, linewidth=0.4,
                       transform=ax_c.transAxes)
 
     return y - title_h - title_gap - c_h
@@ -434,7 +403,8 @@ def _row_h(n_aa_rows):
 
 # ── Main PDF function ──────────────────────────────────────────────────────────
 
-def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -> bytes:
+def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
+                  di_account: str = None) -> bytes:
     # Direct Indexing proposal (optional) — parsed up front so any parsing
     # error surfaces before we spend time building the Eclipse-based pages.
     di_gl = di_tax = di_lt = di_st = None
@@ -509,7 +479,6 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
 
     # Asset allocation — strip common prefix so "Savvy Strategic 60/40 US Equity"
     # becomes "US Equity" regardless of which model is in the file.
-    # Percentages are taken at face value from the Model Tolerance sheet.
     aa = mt_df[['Class', 'Current %', 'Target %', 'Post %', 'Trade $']].copy()
     aa['Class'] = aa['Class'].str.strip()
     aa['Class'] = _strip_class_names(aa['Class'])
@@ -540,6 +509,61 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
     cg        = gl_df.iloc[0]
     total_val = ac_df['Account Value'].sum()
 
+    # ── Direct Indexing account: fold its balance into the Asset Allocation
+    # table (as "US Large Cap") and rebase every row's percentages against
+    # the combined total, since the DI sleeve isn't part of the Model
+    # Tolerance sheet at all.
+    di_amount = None
+    if di_account:
+        acct_num_col = _find_col(ac_df, 'Account Number', 'Account Num', 'Acct Number')
+        val_col      = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
+        if acct_num_col and val_col:
+            norm = lambda s: s.astype(str).str.strip().str.replace(r'\.0+$', '', regex=True)
+            match = ac_df[norm(ac_df[acct_num_col]) == str(di_account).strip()]
+            if not match.empty:
+                di_amount = float(match[val_col].sum())
+        if di_amount is None:
+            raise ValueError(
+                f'Could not find account "{di_account}" in the Account and '
+                'Cash Details sheet to compute the Direct Indexing allocation.'
+            )
+
+    di_only_large_cap = False   # True if US Large Cap has no real trade of its own — only DI is touching it
+
+    if di_amount:
+        grand_total = total_val                 # already includes the DI account
+        core_total  = grand_total - di_amount    # base the Model Tolerance % were computed against
+
+        aa['_cur_$']  = aa['Current %'].fillna(0) / 100 * core_total
+        aa['_tgt_$']  = aa['Target %'].fillna(0)  / 100 * core_total
+        aa['_post_$'] = aa['Post %'].fillna(0)    / 100 * core_total
+        # Trade $ is left untouched by the DI balance — it's not a real trade
+        # through Eclipse, just money already sitting in/moving into the DI
+        # sleeve. Any actual US Large Cap trade from the core STP sleeve
+        # still shows here unchanged.
+
+        mask = aa['Class'].str.strip().str.lower() == 'us large cap'
+        if mask.any():
+            aa.loc[mask, '_cur_$']  += di_amount
+            aa.loc[mask, '_tgt_$']  += di_amount
+            aa.loc[mask, '_post_$'] += di_amount
+            existing_trade = aa.loc[mask, 'Trade $'].iloc[0]
+            di_only_large_cap = pd.isna(existing_trade) or existing_trade == 0
+        else:
+            new_row = pd.DataFrame([{
+                'Class': 'US Large Cap', 'Current %': None, 'Target %': None,
+                'Post %': None, 'Trade $': None,
+                '_cur_$': di_amount, '_tgt_$': di_amount, '_post_$': di_amount,
+            }])
+            aa = pd.concat([aa, new_row], ignore_index=True)
+            di_only_large_cap = True
+
+        aa['Current %'] = aa['_cur_$']  / grand_total * 100
+        aa['Target %']  = aa['_tgt_$']  / grand_total * 100
+        aa['Post %']    = aa['_post_$'] / grand_total * 100
+        aa = aa.drop(columns=['_cur_$', '_tgt_$', '_post_$'])
+        aa = aa.sort_values('Target %', ascending=False).reset_index(drop=True)
+
     # Logo
     logo_img = None
     try:
@@ -557,7 +581,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         # PAGE 1 — Portfolio Summary
         # ══════════════════════════════════════════════════════════════════════
         fig = plt.figure(figsize=(PAGE_W, PAGE_H), dpi=200)
-        fig.patch.set_facecolor(VANILLA)
+        fig.patch.set_facecolor(CREAM2)
         y = 0.96
 
         y = _header(fig, y, client_name, 'Portfolio Transition Analysis', logo_img)
@@ -566,7 +590,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         ax_tm = fig.add_axes([ML, y - 0.024, CW, 0.022])
         ax_tm.axis('off')
         ax_tm.text(0, 0.5, f'Target Model:  {target_model}',
-                   fontsize=9, color=BLACK, va='center', transform=ax_tm.transAxes)
+                   fontsize=9, color=MUTED, va='center', transform=ax_tm.transAxes)
         y -= 0.026 + 0.010
 
         # ── Metrics cards ─────────────────────────────────────────────────────
@@ -578,11 +602,11 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
             est_tax = est_tax + di_tax
         tax_pct = (est_tax / total_val * 100) if total_val else 0
         def _signed_color(v, positive_bad=False):
-            if v > 0:  return LOSS if positive_bad else GAIN
-            if v < 0:  return GAIN if positive_bad else LOSS
-            return BLACK
+            if v > 0:  return RED if positive_bad else GREEN
+            if v < 0:  return GREEN if positive_bad else RED
+            return MUTED
         metrics = [
-            ('TOTAL VALUE',    _money(total_val),    BLACK),
+            ('TOTAL VALUE',    _money(total_val),    TEAL),
             ('TRANSITION G/L', _money(gl_val, 2),    _signed_color(gl_val)),
             ('ESTIMATED TAX',  _money(est_tax, 2),   _signed_color(est_tax, positive_bad=True)),
             ('TAX IMPACT',     f'{tax_pct:.2f}%',    _signed_color(est_tax, positive_bad=True)),
@@ -594,13 +618,13 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         for i, (label, value, vcolor) in enumerate(metrics):
             x = ML + i * (card_w + gap)
             ax_c = fig.add_axes([x, y - card_h, card_w, card_h])
-            ax_c.set_facecolor(WHITE)
+            ax_c.set_facecolor('white')
             ax_c.set_xticks([]); ax_c.set_yticks([])
             for sp in ax_c.spines.values():
-                sp.set_edgecolor(ECRU); sp.set_linewidth(0.6)
-            ax_c.text(0.10, 0.80, label, fontsize=7,
-                      color=BLACK, transform=ax_c.transAxes)
-            ax_c.text(0.10, 0.26, value, fontsize=14, fontweight='light',
+                sp.set_edgecolor(TAN2); sp.set_linewidth(0.6)
+            ax_c.text(0.10, 0.80, label, fontsize=7, fontweight='bold',
+                      color=MUTED, transform=ax_c.transAxes)
+            ax_c.text(0.10, 0.26, value, fontsize=13, fontweight='bold',
                       color=vcolor, transform=ax_c.transAxes)
         y -= card_h + 0.018
 
@@ -615,24 +639,23 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         aa_rows = []
         for _, r in aa.iterrows():
             t = r['Trade $']
-            cls_lower = str(r['Class']).strip().lower()
-            is_indexing_row = ('custom indexing' in cls_lower
-                               or 'direct indexing' in cls_lower)
-            if is_indexing_row:
+            is_di_only_row = (di_only_large_cap and r['Class'].strip().lower() == 'us large cap')
+            if is_di_only_row:
                 trade_str = 'See Transition Analysis'
             else:
                 trade_str = '—' if (pd.isna(t) or t == 0) else _money(t)
             aa_rows.append([
-                _trunc(r['Class'], 42),
+                _trunc(r['Class'], 38),
+                f"{r['Current %']:.1f}%",
                 f"{r['Target %']:.1f}%",
                 f"{r['Post %']:.1f}%",
                 trade_str,
             ])
         _table(ax_aa, aa_rows,
-               col_labels=['Asset Class', 'Target %', 'Post-Trade %', 'Trade Amount'],
-               col_widths=[0.42, 0.16, 0.18, 0.24],
+               col_labels=['Asset Class', 'Current %', 'Target %', 'Post-Trade %', 'Trade Amount'],
+               col_widths=[0.38, 0.13, 0.13, 0.15, 0.21],
                fontsize=8.5,
-               color_cols=[2, 3], right_cols=[3], center_cols=[1, 2])
+               color_cols=[3, 4], right_cols=[4], center_cols=[1, 2, 3])
         y -= tbl_h + 0.020
 
         # ── Tax Assessment — pre/post panels ──────────────────────────────────
@@ -698,9 +721,9 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
 
         panel_w = (CW - 0.014) / 2
         pre_y  = _tax_panel(fig, ML,                    y, panel_w, pre_rows,
-                             'PRE-TRANSITION',  ECRU, title_text_color=BLACK)
+                             'PRE-TRANSITION',  '#6B6B6B')
         post_y = _tax_panel(fig, ML + panel_w + 0.014, y, panel_w, post_rows,
-                             'POST-TRANSITION', SAVVY_GOLD, title_text_color=WHITE)
+                             'POST-TRANSITION', '#4A4A4A')
         y = min(pre_y, post_y)
 
         _disclaimer(fig)
@@ -711,7 +734,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         # PAGE 2 — Trade Detail
         # ══════════════════════════════════════════════════════════════════════
         fig2 = plt.figure(figsize=(PAGE_W, PAGE_H), dpi=200)
-        fig2.patch.set_facecolor(VANILLA)
+        fig2.patch.set_facecolor(CREAM2)
         y2 = 0.96
 
         y2 = _header(fig2, y2, client_name, 'Detailed Trade Analysis', logo_img)
@@ -753,20 +776,20 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
         trade_space = y2 - 0.088 - trade_overhead
         trade_rh = max(0.022, min(0.032, trade_space / (2 * (max_rows + 1))))
 
-        for data, title, hcol in [(buys, 'TOP 10 BUYS', DEEP_BLUE),
+        for data, title, hcol in [(buys, 'TOP 10 BUYS', TEAL),
                                    (sells, 'TOP 10 SELLS', RED)]:
             # Section label
             ax_lbl = fig2.add_axes([ML, y2 - 0.026, CW, 0.024])
             ax_lbl.axis('off')
             ax_lbl.text(0, 0.35, title, fontsize=10, fontweight='bold',
-                        color=BLACK, va='center', transform=ax_lbl.transAxes)
+                        color=hcol, va='center', transform=ax_lbl.transAxes)
             y2 -= 0.026 + 0.008
 
             if data.empty:
                 ax_e = fig2.add_axes([ML, y2 - 0.040, CW, 0.035])
                 ax_e.axis('off')
                 ax_e.text(0.5, 0.5, 'No trades identified.', ha='center',
-                          fontsize=9, color=BLACK, transform=ax_e.transAxes)
+                          fontsize=9, color=MUTED, transform=ax_e.transAxes)
                 y2 -= 0.050
                 continue
 
@@ -809,7 +832,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
                    color_cols=color_cols,
                    right_cols=right_cols,
                    center_cols=[0, 1],
-                   hdr_color=hcol, hdr_text_color=WHITE)
+                   hdr_color=hcol)
             y2 -= t_h + 0.028
 
         # ── Direct Indexing Rebalance (kept separate from buys/sells) ──────────
@@ -817,7 +840,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
             ax_lbl = fig2.add_axes([ML, y2 - 0.026, CW, 0.024])
             ax_lbl.axis('off')
             ax_lbl.text(0, 0.35, 'DIRECT INDEXING REBALANCE', fontsize=10, fontweight='bold',
-                        color=BLACK, va='center', transform=ax_lbl.transAxes)
+                        color=TEAL2, va='center', transform=ax_lbl.transAxes)
             y2 -= 0.026 + 0.008
 
             di_row = [['DI', 'Direct Indexing Rebalance — See Transition Analysis', _money(di_gl, 2)]]
@@ -831,7 +854,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None) -
                    color_cols=[2],
                    right_cols=[2],
                    center_cols=[0],
-                   hdr_color=SAVVY_GOLD, hdr_text_color=WHITE)
+                   hdr_color=TAN)
             y2 -= di_h + 0.028
 
         _disclaimer(fig2)
@@ -858,13 +881,14 @@ class handler(BaseHTTPRequestHandler):
             client_name = body.get('client_name', '').strip()
             excel_b64   = body.get('excel_data', '')
             di_b64      = body.get('di_data', '')
+            di_account  = body.get('di_account', '').strip() or None
 
             if not client_name or not excel_b64:
                 self._error(400, 'client_name and excel_data are required.')
                 return
 
             di_bytes = base64.b64decode(di_b64) if di_b64 else None
-            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name, di_bytes)
+            pdf_bytes = generate_pdf(base64.b64decode(excel_b64), client_name, di_bytes, di_account)
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/pdf')

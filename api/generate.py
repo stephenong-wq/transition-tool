@@ -484,6 +484,14 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
     aa['Class'] = _strip_class_names(aa['Class'])
     aa['Class'] = aa['Class'].str.replace('U.S.', 'US', regex=False).str.strip()
     aa['Class'] = aa['Class'].str.replace('Unassigned', 'Non-Model Holdings', case=False, regex=False)
+
+    # Non-sleeved direct indexing accounts are assigned their own class in
+    # Eclipse ("... - Equity-SMA"). Take it at face value, just tidy the label.
+    sma_mask = aa['Class'].str.contains(r'equity[\s\-]*sma', case=False, regex=True)
+    has_sma_class = bool(sma_mask.any())
+    if has_sma_class:
+        aa.loc[sma_mask, 'Class'] = 'Equity SMA'
+
     aa = aa.sort_values('Target %', ascending=False).reset_index(drop=True)
 
     # Trades
@@ -514,7 +522,8 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
     # the combined total, since the DI sleeve isn't part of the Model
     # Tolerance sheet at all.
     di_amount = None
-    if di_account:
+    sleeved_di = bool(di_account) and '_' in str(di_account) and not has_sma_class
+    if sleeved_di:
         acct_num_col = _find_col(ac_df, 'Account Number', 'Account Num', 'Acct Number')
         val_col      = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
         if acct_num_col and val_col:
@@ -529,6 +538,9 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
             )
 
     di_only_large_cap = False   # True if US Large Cap has no real trade of its own — only DI is touching it
+    # Class rows whose Trade Amount should read "See Transition Analysis"
+    # (only DI is acting on them, so there's no Eclipse trade to show).
+    di_note_classes = set()
 
     if di_amount:
         grand_total = total_val                 # already includes the DI account
@@ -558,11 +570,19 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
             aa = pd.concat([aa, new_row], ignore_index=True)
             di_only_large_cap = True
 
+        if di_only_large_cap:
+            di_note_classes.add('us large cap')
+
         aa['Current %'] = aa['_cur_$']  / grand_total * 100
         aa['Target %']  = aa['_tgt_$']  / grand_total * 100
         aa['Post %']    = aa['_post_$'] / grand_total * 100
         aa = aa.drop(columns=['_cur_$', '_tgt_$', '_post_$'])
         aa = aa.sort_values('Target %', ascending=False).reset_index(drop=True)
+
+    if has_sma_class and di_gl is not None:
+        sma_trade = aa.loc[aa['Class'] == 'Equity SMA', 'Trade $'].iloc[0]
+        if pd.isna(sma_trade) or sma_trade == 0:
+            di_note_classes.add('equity sma')
 
     # Logo
     logo_img = None
@@ -639,8 +659,7 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
         aa_rows = []
         for _, r in aa.iterrows():
             t = r['Trade $']
-            is_di_only_row = (di_only_large_cap and r['Class'].strip().lower() == 'us large cap')
-            if is_di_only_row:
+            if r['Class'].strip().lower() in di_note_classes:
                 trade_str = 'See Transition Analysis'
             else:
                 trade_str = '—' if (pd.isna(t) or t == 0) else _money(t)

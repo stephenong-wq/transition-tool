@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Transition Analysis | Savvy</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -126,6 +125,14 @@ select {
   transition: border-color 0.15s, box-shadow 0.15s;
   cursor: pointer;
 }
+.field-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.field-hint.error { color: var(--red); }
+select:disabled { opacity: 0.6; cursor: not-allowed; }
 select:focus {
   border-color: var(--teal-dark);
   box-shadow: 0 0 0 3px rgba(9,89,114,0.1);
@@ -332,10 +339,11 @@ select:focus {
       </div>
 
       <div class="field-group" id="diAccountGroup" style="display:none;">
-        <label class="field-label" for="diAccountSelect">Which sleeved account holds the Direct Indexing strategy?</label>
+        <label class="field-label" for="diAccountSelect">Which account holds the Direct Indexing strategy?</label>
         <select id="diAccountSelect">
           <option value="">Select account…</option>
         </select>
+        <div class="field-hint" id="diAccountHint"></div>
       </div>
 
       <hr class="divider">
@@ -392,71 +400,76 @@ select:focus {
   let selectedFile = null;
   let selectedDiFile = null; // optional
 
-  function findHeader(headers, ...candidates) {
-    for (const c of candidates) {
-      const hit = headers.find(h => String(h).toLowerCase().includes(c.toLowerCase()));
-      if (hit) return hit;
+  // Ask the backend which accounts are in the Eclipse export (it already
+  // understands the file format), so there is no client-side spreadsheet parsing.
+  async function fetchAccounts(file) {
+    const resp = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'accounts', excel_data: await fileToBase64(file) })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(err.error || `Server error ${resp.status}`);
     }
-    return null;
+    return resp.json();
   }
 
-  // Parse the Eclipse export client-side to list every account so the user
-  // can pick which one holds the Direct Indexing strategy (a sleeve like
-  // "1234_01" or a regular custodian account).
-  async function findAccounts(file) {
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
-    const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('account and cash details'));
-    if (!sheetName) return [];
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
-    if (!rows.length) return [];
-    const headers = Object.keys(rows[0]);
-    const acctCol = findHeader(headers, 'account number', 'account num', 'acct number');
-    const regCol  = findHeader(headers, 'reg type', 'registration type', 'reg. type');
-    const valCol  = findHeader(headers, 'account value', 'acct value', 'market value');
-    if (!acctCol) return [];
-
-    const out = [];
-    const seen = new Set();
-    for (const r of rows) {
-      const raw = String(r[acctCol] ?? '').trim().replace(/\.0+$/, '');
-      if (!raw || seen.has(raw)) continue;
-      seen.add(raw);
-      out.push({ account: raw, reg: regCol ? r[regCol] : '', value: valCol ? r[valCol] : null });
-    }
-    return out;
-  }
-
-  // The dropdown is only needed for sleeved accounts (numbers containing "_").
-  // Regular custodian accounts already carry an Eclipse class (e.g. Equity SMA),
-  // so no selection is required for those.
+  const diAccountHint = document.getElementById('diAccountHint');
   let diAccountRequired = false;
+  let accountsRequestId = 0;
+
+  function setDiHint(text, isError) {
+    diAccountHint.textContent = text || '';
+    diAccountHint.className = 'field-hint' + (isError ? ' error' : '');
+  }
 
   async function refreshDiAccountOptions() {
+    const requestId = ++accountsRequestId;
     diAccountRequired = false;
+    diAccountSelect.disabled = false;
+
     if (!selectedFile || !selectedDiFile) {
       diAccountGroup.style.display = 'none';
       diAccountSelect.innerHTML = '<option value="">Select account…</option>';
+      setDiHint('');
       updateGenerateBtn();
       return;
     }
+
+    diAccountGroup.style.display = 'block';
+    diAccountSelect.innerHTML = '<option value="">Loading accounts…</option>';
+    setDiHint('');
+    updateGenerateBtn();
+
     try {
-      const sleeved = (await findAccounts(selectedFile)).filter(a => a.account.includes('_'));
-      if (!sleeved.length) {
-        diAccountGroup.style.display = 'none';
-        diAccountSelect.innerHTML = '<option value="">Select account…</option>';
+      const info = await fetchAccounts(selectedFile);
+      if (requestId !== accountsRequestId) return;   // a newer file was chosen meanwhile
+
+      const accounts = info.accounts || [];
+      const anySleeved = accounts.some(a => a.sleeved);
+      diAccountRequired = anySleeved && !info.has_equity_sma;
+
+      const firstLabel = diAccountRequired ? 'Select account…' : 'Auto-detect (no selection needed)';
+      diAccountSelect.innerHTML = `<option value="">${firstLabel}</option>` +
+        accounts.map(a => {
+          const valueStr = a.value != null ? ` — $${Number(a.value).toLocaleString()}` : '';
+          const regStr = a.reg ? ` — ${a.reg}` : '';
+          return `<option value="${a.account}">${a.account}${regStr}${valueStr}</option>`;
+        }).join('');
+
+      if (info.has_equity_sma) {
+        diAccountSelect.disabled = true;
+        setDiHint('Direct Indexing account detected from the Eclipse export (Equity SMA class) — no selection needed.');
+      } else if (diAccountRequired) {
+        setDiHint('Pick the sleeve that holds the Direct Indexing strategy.');
       } else {
-        diAccountRequired = true;
-        diAccountGroup.style.display = 'block';
-        diAccountSelect.innerHTML = '<option value="">Select account…</option>' +
-          sleeved.map(a => {
-            const valueStr = a.value != null ? ` — $${Number(a.value).toLocaleString()}` : '';
-            const regStr = a.reg ? ` — ${a.reg}` : '';
-            return `<option value="${a.account}">${a.account}${regStr}${valueStr}</option>`;
-          }).join('');
+        setDiHint('Optional — only pick an account if the Direct Indexing account is not already assigned a class in Eclipse.');
       }
     } catch (e) {
-      diAccountGroup.style.display = 'none';
+      if (requestId !== accountsRequestId) return;
+      diAccountSelect.innerHTML = '<option value="">Could not read accounts</option>';
+      setDiHint('Could not read the account list from this file: ' + e.message, true);
     }
     updateGenerateBtn();
   }
@@ -534,7 +547,7 @@ select:focus {
 
       if (selectedDiFile) {
         payload.di_data = await fileToBase64(selectedDiFile);
-        if (diAccountRequired) payload.di_account = diAccountSelect.value;
+        if (diAccountSelect.value) payload.di_account = diAccountSelect.value;
       }
 
       const response = await fetch('/api/generate', {

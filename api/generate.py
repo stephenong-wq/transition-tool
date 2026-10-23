@@ -765,35 +765,47 @@ def generate_pdf(excel_bytes: bytes, client_name: str, di_bytes: bytes = None,
         acct_val_col   = _find_col(ac_df, 'Account Value', 'Acct Value', 'Market Value')
         acct_trade_col = _find_col(ac_df, 'Trade $', 'Trade Amount')
 
+        acct_rows_p2 = []
         if acct_num_col and acct_val_col:
             ac_show = ac_df[ac_df[acct_val_col].notna() & (ac_df[acct_val_col] != 0)].copy()
-            if not ac_show.empty:
-                acct_rows_p2 = []
-                for _, r in ac_show.iterrows():
-                    acct_str = f'x{_mask_account(r[acct_num_col])}'
-                    reg  = str(r[reg_type_col]).strip() if reg_type_col else '—'
-                    val  = _money(r[acct_val_col]) if not pd.isna(r[acct_val_col]) else '—'
-                    acct_rows_p2.append([acct_str, reg, val])
+            for _, r in ac_show.iterrows():
+                acct_str = f'x{_mask_account(r[acct_num_col])}'
+                reg  = str(r[reg_type_col]).strip() if reg_type_col else '—'
+                val  = _money(r[acct_val_col]) if not pd.isna(r[acct_val_col]) else '—'
+                acct_rows_p2.append([acct_str, reg, val])
 
-                y2 = _section_hdr(fig2, y2, 'ACCOUNTS')
-                n_a = len(acct_rows_p2)
-                a_rh = min(0.032, 0.22 / (n_a + 1))
-                a_h  = (n_a + 1) * a_rh
-                ax_a = fig2.add_axes([ML, y2 - a_h, CW, a_h])
-                ax_a.axis('off')
-                _table(ax_a, acct_rows_p2,
-                       col_labels=['Account', 'Reg Type', 'Account Value'],
-                       col_widths=[0.18, 0.27, 0.55],
-                       fontsize=8.5,
-                       right_cols=[2],
-                       center_cols=[0])
-                y2 -= a_h + 0.022
+        # One shared row height for every table on this page, sized so the
+        # accounts table, buys, sells and (if present) the Direct Indexing
+        # table all fit above the footer.
+        has_di_section = di_gl is not None
+        n_a = len(acct_rows_p2)
+        table_rows = (n_a + 1 if n_a else 0)
+        fixed = (0.037 + 0.008 + 0.022) if n_a else 0.0
+        for data in (buys, sells):
+            fixed += 0.026 + 0.008 + 0.028          # label + gap + space after
+            if data.empty:
+                fixed += 0.050 - 0.028              # "No trades identified." block
+            else:
+                table_rows += len(data) + 1
+        if has_di_section:
+            fixed += 0.026 + 0.008 + 0.028
+            table_rows += 2
+        footer_reserve = 0.075
+        page_rh = (y2 - footer_reserve - fixed) / max(table_rows, 1)
+        trade_rh = max(0.017, min(0.032, page_rh))
 
-        # Row height: fit the larger table into half the available space, cap at 0.032
-        max_rows = max(len(buys), len(sells), 1)
-        trade_overhead = 2 * (0.034 + 0.008 + 0.028)
-        trade_space = y2 - 0.088 - trade_overhead
-        trade_rh = max(0.022, min(0.032, trade_space / (2 * (max_rows + 1))))
+        if acct_rows_p2:
+            y2 = _section_hdr(fig2, y2, 'ACCOUNTS')
+            a_h  = (n_a + 1) * trade_rh
+            ax_a = fig2.add_axes([ML, y2 - a_h, CW, a_h])
+            ax_a.axis('off')
+            _table(ax_a, acct_rows_p2,
+                   col_labels=['Account', 'Reg Type', 'Account Value'],
+                   col_widths=[0.18, 0.27, 0.55],
+                   fontsize=8.5,
+                   right_cols=[2],
+                   center_cols=[0])
+            y2 -= a_h + 0.022
 
         for data, title, hcol in [(buys, 'TOP 10 BUYS', TEAL),
                                    (sells, 'TOP 10 SELLS', RED)]:

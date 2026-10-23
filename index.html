@@ -332,7 +332,7 @@ select:focus {
       </div>
 
       <div class="field-group" id="diAccountGroup" style="display:none;">
-        <label class="field-label" for="diAccountSelect">Which account holds the Direct Indexing strategy?</label>
+        <label class="field-label" for="diAccountSelect">Which sleeved account holds the Direct Indexing strategy?</label>
         <select id="diAccountSelect">
           <option value="">Select account…</option>
         </select>
@@ -427,36 +427,42 @@ select:focus {
     return out;
   }
 
+  // The dropdown is only needed for sleeved accounts (numbers containing "_").
+  // Regular custodian accounts already carry an Eclipse class (e.g. Equity SMA),
+  // so no selection is required for those.
+  let diAccountRequired = false;
+
   async function refreshDiAccountOptions() {
+    diAccountRequired = false;
     if (!selectedFile || !selectedDiFile) {
       diAccountGroup.style.display = 'none';
       diAccountSelect.innerHTML = '<option value="">Select account…</option>';
       updateGenerateBtn();
       return;
     }
-    diAccountGroup.style.display = 'block';
-    diAccountSelect.innerHTML = '<option value="">Loading accounts…</option>';
     try {
-      const accounts = await findAccounts(selectedFile);
-      if (!accounts.length) {
-        diAccountSelect.innerHTML = '<option value="">No accounts found in this export</option>';
+      const sleeved = (await findAccounts(selectedFile)).filter(a => a.account.includes('_'));
+      if (!sleeved.length) {
+        diAccountGroup.style.display = 'none';
+        diAccountSelect.innerHTML = '<option value="">Select account…</option>';
       } else {
+        diAccountRequired = true;
+        diAccountGroup.style.display = 'block';
         diAccountSelect.innerHTML = '<option value="">Select account…</option>' +
-          accounts.map(a => {
+          sleeved.map(a => {
             const valueStr = a.value != null ? ` — $${Number(a.value).toLocaleString()}` : '';
             const regStr = a.reg ? ` — ${a.reg}` : '';
             return `<option value="${a.account}">${a.account}${regStr}${valueStr}</option>`;
           }).join('');
       }
     } catch (e) {
-      diAccountSelect.innerHTML = '<option value="">Could not read accounts from file</option>';
+      diAccountGroup.style.display = 'none';
     }
     updateGenerateBtn();
   }
 
   function updateGenerateBtn() {
-    const needsDiAccount = !!selectedDiFile;
-    const diAccountOk = !needsDiAccount || !!diAccountSelect.value;
+    const diAccountOk = !diAccountRequired || !!diAccountSelect.value;
     generateBtn.disabled = !(clientNameEl.value.trim() && selectedFile && diAccountOk);
   }
 
@@ -528,7 +534,7 @@ select:focus {
 
       if (selectedDiFile) {
         payload.di_data = await fileToBase64(selectedDiFile);
-        payload.di_account = diAccountSelect.value;
+        if (diAccountRequired) payload.di_account = diAccountSelect.value;
       }
 
       const response = await fetch('/api/generate', {
